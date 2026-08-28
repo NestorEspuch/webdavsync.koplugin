@@ -93,7 +93,6 @@ function Synchronize.run()
                 return
             end
 
-            -- Calculate total download size.
             local total_size = 0
             for _, file in ipairs(to_download) do
                 if file.size then
@@ -106,7 +105,6 @@ function Synchronize.run()
                 end
             end
 
-            -- Check available disk space.
             local available = Config.getAvailableSpace(local_path)
             if available and total_size > available then
                 Trapper:clear()
@@ -123,7 +121,6 @@ function Synchronize.run()
             local redownloaded = 0
             local deleted = 0
 
-            -- Download new files (remote_only).
             for i, file in ipairs(to_download) do
                 local remote_entry = remote_files[file.path]
                 if not remote_entry then
@@ -159,7 +156,6 @@ function Synchronize.run()
                 end
             end
 
-            -- Re-download incomplete files (local < remote).
             for i, file in ipairs(to_incomplete) do
                 local remote_entry = remote_files[file.path]
                 if not remote_entry then
@@ -195,7 +191,6 @@ function Synchronize.run()
                 end
             end
 
-            -- Delete local-only files.
             for i, file in ipairs(to_delete) do
                 local name = file.path:match("([^/]+)$") or file.path
                 local text = string.format(
@@ -225,10 +220,8 @@ function Synchronize.run()
                 end
             end
 
-            -- Clean up empty directories.
             deleteEmptyDirs(local_path)
 
-            -- Final summary.
             Trapper:clear()
 
             local final = _("Synchronization complete") .. "\n\n"

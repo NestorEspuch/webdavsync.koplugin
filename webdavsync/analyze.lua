@@ -164,7 +164,6 @@ function Analyze.scanRemoteDirectory(server)
         end
     end
 
-    -- Restore original setting.
     reader_settings:saveSetting("show_unsupported", was_unsupported)
     reader_settings:flush()
 
@@ -340,7 +339,6 @@ function Analyze.showFolderBrowser(title, items, categories_menu)
             })
         end
 
-        -- Sub-folders (sorted).
         local sorted_folders = {}
         for name, sub in pairs(node.folders) do
             table.insert(sorted_folders, {name = name, sub = sub})
@@ -356,7 +354,6 @@ function Analyze.showFolderBrowser(title, items, categories_menu)
             })
         end
 
-        -- Files (sorted).
         local sorted_files = {}
         for _, file in ipairs(node.files) do
             table.insert(sorted_files, file)

@@ -36,19 +36,16 @@ function Config.normalizeLocalPath(path)
         return nil
     end
 
-    -- Remove leading/trailing whitespace.
     path = path:match("^%s*(.-)%s*$")
 
     if path == "" then
         return nil
     end
 
-    -- Reject null bytes.
     if path:find("%z") then
         return nil
     end
 
-    -- Normalize every sequence of slashes to one slash.
     path = path:gsub("/+", "/")
 
     -- The user may enter the complete /mnt/us/... path.
@@ -57,22 +54,17 @@ function Config.normalizeLocalPath(path)
     elseif path:sub(1, 8) == "/mnt/us/" then
         path = path:sub(9)
     elseif path:sub(1, 1) == "/" then
-        -- A leading slash is harmless: treat it as relative to /mnt/us.
         path = path:gsub("^/+", "")
     end
 
-    -- Remove any remaining leading slashes.
     path = path:gsub("^/+", "")
 
-    -- Normalize again in case the prefix removal exposed repeated slashes.
     path = path:gsub("/+", "/")
 
-    -- Reject path traversal.
     if path:find("%.%.") then
         return nil
     end
 
-    -- Reject empty paths.
     if path == "" then
         return nil
     end
@@ -80,7 +72,6 @@ function Config.normalizeLocalPath(path)
     return "/mnt/us/" .. path
 end
 
--- Create a directory and all missing parent directories.
 function Config.ensureDirectory(path)
     if type(path) ~= "string" or path == "" then
         return false
@@ -123,7 +114,6 @@ function Config.ensureDirectory(path)
     return lfs.attributes(path, "mode") == "directory"
 end
 
--- Read the WebDAV servers already configured in KOReader CloudStorage.
 function Config.getServers()
     local settings_file = DataStorage:getSettingsDir() .. "/cloudstorage.lua"
     local cloudstorage_settings = LuaSettings:open(settings_file)
@@ -219,7 +209,6 @@ function Config.chooseServer(touchmenu_instance)
     local menu
     local items = {}
 
-    -- Clear server selection.
     table.insert(items, {
         text_func = function()
             local selected_index = Config.getSetting("server_index")
@@ -244,7 +233,6 @@ function Config.chooseServer(touchmenu_instance)
         end
     })
 
-    -- Configured WebDAV servers.
     for _, entry in ipairs(servers) do
         local server = entry.server
         local server_name = server.name or server.address or _("Unnamed WebDAV")
@@ -329,7 +317,6 @@ function Config.chooseLocalPath(touchmenu_instance)
             callback = function()
                 local value = input_dialog:getInputText()
 
-                -- Empty input clears the destination.
                 if value == "" then
                     Config.setSetting("local_path", nil)
 
@@ -348,7 +335,6 @@ function Config.chooseLocalPath(touchmenu_instance)
                     return
                 end
 
-                -- Create the destination if necessary.
                 if lfs.attributes(normalized, "mode") ~= "directory" then
                     local ok = Config.ensureDirectory(normalized)
 
@@ -358,7 +344,6 @@ function Config.chooseLocalPath(touchmenu_instance)
                     end
                 end
 
-                -- Save the normalized absolute path.
                 Config.setSetting("local_path", normalized)
 
                 if touchmenu_instance then
