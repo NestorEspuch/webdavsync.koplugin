@@ -1,6 +1,8 @@
 local _ = require("gettext")
 local lfs = require("libs/libkoreader-lfs")
+local DataStorage = require("datastorage")
 local InfoMessage = require("ui/widget/infomessage")
+local LuaSettings = require("luasettings")
 local Menu = require("ui/widget/menu")
 local UIManager = require("ui/uimanager")
 
@@ -9,23 +11,12 @@ local WebDavClient = require("webdavsync/webdav_client")
 
 local Analyze = {}
 
-local REMOTE_MAX_DEPTH = 20
+local REMOTE_MAX_DEPTH = 10
 
 ----------------------------------------------------------------------
 -- Scan local directory recursively
 --
 -- Returns a table indexed by relative file path.
---
--- Example:
---
--- ["Autor/Saga/book.epub"] = {
---     name = "book.epub",
---     path = "Autor/Saga/book.epub",
---     full_path = "/mnt/us/Libros/Synced/Autor/Saga/book.epub",
---     size = 123456,
---     modified = 1234567890,
--- }
---
 ----------------------------------------------------------------------
 
 function Analyze.scanLocalDirectory(local_path)
@@ -91,7 +82,6 @@ function Analyze.scanLocalDirectory(local_path)
         return true
     end
 
-    -- The root directory must exist.
     if lfs.attributes(local_path, "mode") ~= "directory" then
         return nil
     end
@@ -108,16 +98,11 @@ end
 ----------------------------------------------------------------------
 -- Scan remote WebDAV directory iteratively (DFS, depth-capped)
 --
--- Returns a table indexed by relative file path (relative to server.url).
+-- Each stack entry carries its depth level so we cap on actual
+-- depth, not on the number of folders processed.
 --
--- Example:
---
--- ["Autor/Saga/book.epub"] = {
---     name = "book.epub",
---     url = "Libros/Autor/Saga/book.epub",
---     size = 123456,
--- }
---
+-- Temporarily enables show_unsupported so ALL file types are
+-- returned, not just formats KOReader can open.
 ----------------------------------------------------------------------
 
 function Analyze.scanRemoteDirectory(server)
@@ -125,57 +110,69 @@ function Analyze.scanRemoteDirectory(server)
     local files = {}
     local url_prefix = (server.url or ""):match("^/*(.-)/*$") .. "/"
     local start_url = server.url or ""
-    local stack = {start_url}
-    local depth = 0
 
-    while #stack > 0 and depth < REMOTE_MAX_DEPTH do
+    -- Temporarily enable show_unsupported to get all file types.
+    local settings_file = DataStorage:getSettingsDir() .. "/.settings/reader.lua"
+    local reader_settings = LuaSettings:open(settings_file)
+    local was_unsupported = reader_settings:isTrue("show_unsupported")
+    reader_settings:saveSetting("show_unsupported", true)
+    reader_settings:flush()
 
-        local current_url = table.remove(stack)
-        local items = WebDavClient.listFolder(server, current_url, true)
+    local stack = {{url = start_url, level = 0}}
 
-        if not items then
-            return nil
-        end
+    while #stack > 0 do
 
-        for _, item in ipairs(items) do
+        local current = table.remove(stack)
 
-            if item.is_file then
+        if current.level < REMOTE_MAX_DEPTH then
 
-                local name = item.text
+            local items = WebDavClient.listFolder(server, current.url, true)
 
-                if not name:match("^%.") then
-                    local relative = item.url:match("^" .. url_prefix:gsub("/", "%%/") .. "(.+)$")
-                    if relative then
-                        files[relative] = {
-                            name = name,
-                            url = item.url,
-                            size = item.filesize,
-                        }
+            if items then
+
+                for _, item in ipairs(items) do
+
+                    if item.is_file then
+
+                        local name = item.text
+
+                        if not name:match("^%.") then
+                            local relative = item.url:match("^" .. url_prefix:gsub("/", "%%/") .. "(.+)$")
+                            if relative then
+                                files[relative] = {
+                                    name = name,
+                                    url = item.url,
+                                    size = item.filesize,
+                                }
+                            end
+                        end
+
+                    elseif item.is_folder then
+
+                        local name = item.text:gsub("/$", "")
+
+                        if not name:match("^%.") then
+                            table.insert(stack, {
+                                url = item.url,
+                                level = current.level + 1,
+                            })
+                        end
+
                     end
                 end
-
-            elseif item.is_folder then
-
-                local name = item.text:gsub("/$", "")
-
-                if not name:match("^%.") then
-                    table.insert(stack, item.url)
-                end
-
             end
         end
-
-        depth = depth + 1
     end
+
+    -- Restore original setting.
+    reader_settings:saveSetting("show_unsupported", was_unsupported)
+    reader_settings:flush()
 
     return files
 end
 
 ----------------------------------------------------------------------
 -- Compare local and remote files
---
--- Returns a table with four lists: local_only, remote_only,
--- same_size, different_size.
 ----------------------------------------------------------------------
 
 function Analyze.compare(local_files, remote_files)
@@ -239,6 +236,155 @@ local function formatSize(bytes)
 end
 
 ----------------------------------------------------------------------
+-- Build a folder tree from a flat list of file items.
+--
+-- Input:  [{path = "A/S/book.epub", ...}, ...]
+-- Output: { folders = { ["A"] = { folders = { ["S"] = { files = {...} } } } },
+--           files = {root-level files} }
+----------------------------------------------------------------------
+
+local function buildFolderTree(items)
+
+    local tree = {folders = {}, files = {}}
+
+    for _, item in ipairs(items) do
+        local parts = {}
+        for part in item.path:gmatch("[^/]+") do
+            table.insert(parts, part)
+        end
+
+        local current = tree
+
+        if #parts > 1 then
+            for i = 1, #parts - 1 do
+                local folder = parts[i]
+                if not current.folders[folder] then
+                    current.folders[folder] = {folders = {}, files = {}}
+                end
+                current = current.folders[folder]
+            end
+        end
+
+        table.insert(current.files, {
+            text = parts[#parts],
+            size = item.size,
+            local_size = item.local_size,
+            remote_size = item.remote_size,
+        })
+    end
+
+    return tree
+end
+
+----------------------------------------------------------------------
+-- Count all files in a tree
+----------------------------------------------------------------------
+
+local function countTreeFiles(tree)
+    local count = #tree.files
+    for _, sub in pairs(tree.folders) do
+        count = count + countTreeFiles(sub)
+    end
+    return count
+end
+
+----------------------------------------------------------------------
+-- Sort files in a tree by name
+----------------------------------------------------------------------
+
+local function sortTree(tree)
+    table.sort(tree.files, function(a, b) return a.text < b.text end)
+    for _, sub in pairs(tree.folders) do
+        sortTree(sub)
+    end
+end
+
+----------------------------------------------------------------------
+-- Folder browser: single Menu using KOReader's native sub_item_table
+-- for forward navigation and item_table_stack for back navigation.
+----------------------------------------------------------------------
+
+function Analyze.showFolderBrowser(title, items, categories_menu)
+
+    local tree = buildFolderTree(items)
+    sortTree(tree)
+
+    local menu
+
+    local function buildItemTable(node, include_back)
+        local item_table = {}
+
+        -- Back button at the top when not at root.
+        if include_back then
+            table.insert(item_table, {
+                text = _(".."),
+                callback = function()
+                    menu:onClose()
+                end,
+            })
+        end
+
+        -- Sub-folders (sorted).
+        local sorted_folders = {}
+        for name, sub in pairs(node.folders) do
+            table.insert(sorted_folders, {name = name, sub = sub})
+        end
+        table.sort(sorted_folders, function(a, b) return a.name < b.name end)
+
+        for _, entry in ipairs(sorted_folders) do
+            local sub = entry.sub
+            local sub_items = buildItemTable(sub, true)
+            table.insert(item_table, {
+                text = entry.name .. "/ (" .. countTreeFiles(sub) .. ")",
+                sub_item_table = sub_items,
+            })
+        end
+
+        -- Files (sorted).
+        local sorted_files = {}
+        for _, file in ipairs(node.files) do
+            table.insert(sorted_files, file)
+        end
+        table.sort(sorted_files, function(a, b) return a.text < b.text end)
+
+        for _, file in ipairs(sorted_files) do
+            local size_str = ""
+            if file.size then
+                size_str = " — " .. formatSize(file.size)
+            elseif file.local_size or file.remote_size then
+                local parts = {}
+                if file.local_size then
+                    table.insert(parts, _("local") .. ": " .. formatSize(file.local_size))
+                end
+                if file.remote_size then
+                    table.insert(parts, _("remote") .. ": " .. formatSize(file.remote_size))
+                end
+                size_str = " — " .. table.concat(parts, ", ")
+            end
+            table.insert(item_table, {
+                text = file.text .. size_str,
+            })
+        end
+
+        return item_table
+    end
+
+    local item_table = buildItemTable(tree, false)
+
+    menu = Menu:new{
+        title = title,
+        item_table = item_table,
+        close_callback = function()
+            if categories_menu then
+                UIManager:close(categories_menu)
+            end
+        end,
+    }
+
+    UIManager:show(menu)
+end
+
+----------------------------------------------------------------------
 -- Show results: InfoMessage summary + navigable Menu
 ----------------------------------------------------------------------
 
@@ -259,95 +405,40 @@ function Analyze.showResults(server, local_path, local_count, remote_count, resu
     UIManager:show(InfoMessage:new{text = summary})
 
     local categories = {}
+    local categories_menu
 
-    if #result.remote_only > 0 then
+    local function addCategory(label, count, items)
         table.insert(categories, {
-            text = _("Only on WebDAV") .. " (" .. #result.remote_only .. ")",
+            text = label .. " (" .. count .. ")",
             callback = function()
-                Analyze.showFileList(
-                    _("Only on WebDAV"),
-                    result.remote_only
-                )
+                Analyze.showFolderBrowser(label, items, categories_menu)
             end,
         })
+    end
+
+    if #result.remote_only > 0 then
+        addCategory(_("Only on WebDAV"), #result.remote_only, result.remote_only)
     end
 
     if #result.local_only > 0 then
-        table.insert(categories, {
-            text = _("Only local") .. " (" .. #result.local_only .. ")",
-            callback = function()
-                Analyze.showFileList(
-                    _("Only local"),
-                    result.local_only
-                )
-            end,
-        })
+        addCategory(_("Only local"), #result.local_only, result.local_only)
     end
 
     if #result.different_size > 0 then
-        table.insert(categories, {
-            text = _("Different size") .. " (" .. #result.different_size .. ")",
-            callback = function()
-                Analyze.showFileList(
-                    _("Different size"),
-                    result.different_size
-                )
-            end,
-        })
+        addCategory(_("Different size"), #result.different_size, result.different_size)
     end
 
     if #result.same_size > 0 then
-        table.insert(categories, {
-            text = _("Same size") .. " (" .. #result.same_size .. ")",
-            callback = function()
-                Analyze.showFileList(
-                    _("Same size"),
-                    result.same_size
-                )
-            end,
-        })
+        addCategory(_("Same size"), #result.same_size, result.same_size)
     end
 
     if #categories > 0 then
-        UIManager:show(Menu:new{
+        categories_menu = Menu:new{
             title = _("Results"),
             item_table = categories,
-        })
+        }
+        UIManager:show(categories_menu)
     end
-end
-
-----------------------------------------------------------------------
--- Show a list of files for a given category
-----------------------------------------------------------------------
-
-function Analyze.showFileList(title, items)
-
-    local file_items = {}
-
-    for _, item in ipairs(items) do
-        local size_str = ""
-        if item.size then
-            size_str = " — " .. formatSize(item.size)
-        elseif item.local_size or item.remote_size then
-            local parts = {}
-            if item.local_size then
-                table.insert(parts, _("local") .. ": " .. formatSize(item.local_size))
-            end
-            if item.remote_size then
-                table.insert(parts, _("remote") .. ": " .. formatSize(item.remote_size))
-            end
-            size_str = " — " .. table.concat(parts, ", ")
-        end
-
-        table.insert(file_items, {
-            text = item.path .. size_str,
-        })
-    end
-
-    UIManager:show(Menu:new{
-        title = title .. " (" .. #items .. ")",
-        item_table = file_items,
-    })
 end
 
 ----------------------------------------------------------------------
@@ -362,18 +453,10 @@ function Analyze.run()
         return
     end
 
-    ------------------------------------------------------------------
-    -- Verify local destination
-    ------------------------------------------------------------------
-
     if lfs.attributes(local_path, "mode") ~= "directory" then
         Config.showInfo(_("The local destination does not exist.") .. "\n\n" .. local_path)
         return
     end
-
-    ------------------------------------------------------------------
-    -- Scan local files
-    ------------------------------------------------------------------
 
     local local_files = Analyze.scanLocalDirectory(local_path)
 
@@ -383,10 +466,6 @@ function Analyze.run()
     end
 
     local local_count = Analyze.countFiles(local_files)
-
-    ------------------------------------------------------------------
-    -- Scan remote files via WebDAV
-    ------------------------------------------------------------------
 
     local analyzing = InfoMessage:new{text = _("Analyzing remote files...")}
     UIManager:show(analyzing)
@@ -403,10 +482,6 @@ function Analyze.run()
         end
 
         local remote_count = Analyze.countFiles(remote_files)
-
-        ------------------------------------------------------------------
-        -- Compare and show results
-        ------------------------------------------------------------------
 
         local result = Analyze.compare(local_files, remote_files)
 
