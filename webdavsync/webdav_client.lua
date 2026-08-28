@@ -29,4 +29,20 @@ function WebDavClient.listFolder(server, path, include_folders)
     return WebDav.listFolder(path, include_folders)
 end
 
+function WebDavClient.downloadFile(url, local_path, progress_callback)
+    local WebDav = getWebDav()
+    if not WebDav then
+        return nil
+    end
+    return WebDav.downloadFile(url, local_path, progress_callback)
+end
+
+function WebDavClient.deleteFile(url)
+    local WebDav = getWebDav()
+    if not WebDav then
+        return nil
+    end
+    return WebDav.deleteFile(url)
+end
+
 return WebDavClient

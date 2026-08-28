@@ -374,4 +374,22 @@ function Config.chooseLocalPath(touchmenu_instance)
     input_dialog:onShowKeyboard()
 end
 
+function Config.formatSize(bytes)
+    if not bytes then return "?" end
+    if bytes < 1024 then return tostring(bytes) .. " B" end
+    if bytes < 1048576 then return string.format("%.1f KB", bytes / 1024) end
+    return string.format("%.1f MB", bytes / 1048576)
+end
+
+function Config.getAvailableSpace(path)
+    local handle = io.popen('df -B1 "' .. path .. '" 2>/dev/null')
+    if handle then
+        local result = handle:read("*a")
+        handle:close()
+        local available = result:match("%S+%s+%S+%s+%S+%s+(%d+)")
+        return available and tonumber(available) or nil
+    end
+    return nil
+end
+
 return Config

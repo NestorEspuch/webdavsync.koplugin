@@ -181,19 +181,34 @@ function Analyze.compare(local_files, remote_files)
         local_only = {},
         remote_only = {},
         same_size = {},
+        incomplete = {},
         different_size = {},
     }
 
     for path, file in pairs(local_files) do
         if remote_files[path] then
             local remote = remote_files[path]
-            if remote.size and file.size and remote.size == file.size then
-                table.insert(result.same_size, {
-                    path = path,
-                    size = file.size,
-                })
+            if remote.size and file.size then
+                if remote.size == file.size then
+                    table.insert(result.same_size, {
+                        path = path,
+                        size = file.size,
+                    })
+                elseif remote.size > file.size then
+                    table.insert(result.incomplete, {
+                        path = path,
+                        local_size = file.size,
+                        remote_size = remote.size,
+                    })
+                else
+                    table.insert(result.different_size, {
+                        path = path,
+                        local_size = file.size,
+                        remote_size = remote.size,
+                    })
+                end
             else
-                table.insert(result.different_size, {
+                table.insert(result.incomplete, {
                     path = path,
                     local_size = file.size,
                     remote_size = remote.size,
@@ -219,6 +234,7 @@ function Analyze.compare(local_files, remote_files)
     table.sort(result.local_only, function(a, b) return a.path < b.path end)
     table.sort(result.remote_only, function(a, b) return a.path < b.path end)
     table.sort(result.same_size, function(a, b) return a.path < b.path end)
+    table.sort(result.incomplete, function(a, b) return a.path < b.path end)
     table.sort(result.different_size, function(a, b) return a.path < b.path end)
 
     return result
@@ -400,7 +416,8 @@ function Analyze.showResults(server, local_path, local_count, remote_count, resu
         .. _("Only local: ") .. tostring(#result.local_only)
         .. "     " .. _("Only WebDAV: ") .. tostring(#result.remote_only) .. "\n"
         .. _("Same size: ") .. tostring(#result.same_size)
-        .. "     " .. _("Different size: ") .. tostring(#result.different_size)
+        .. "     " .. _("Incomplete: ") .. tostring(#result.incomplete) .. "\n"
+        .. _("Different size: ") .. tostring(#result.different_size)
 
     UIManager:show(InfoMessage:new{text = summary})
 
@@ -422,6 +439,10 @@ function Analyze.showResults(server, local_path, local_count, remote_count, resu
 
     if #result.local_only > 0 then
         addCategory(_("Only local"), #result.local_only, result.local_only)
+    end
+
+    if #result.incomplete > 0 then
+        addCategory(_("Incomplete downloads"), #result.incomplete, result.incomplete)
     end
 
     if #result.different_size > 0 then
