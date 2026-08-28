@@ -46,7 +46,9 @@ function Menu.addToMainMenu(menu_items)
 
             callback = function()
                 Analyze.run()
-            end
+            end,
+
+            keep_menu_open = true
 
         }, {
 
@@ -54,7 +56,9 @@ function Menu.addToMainMenu(menu_items)
 
             callback = function()
                 Synchronize.run()
-            end
+            end,
+
+            keep_menu_open = true
 
         }}
     }
