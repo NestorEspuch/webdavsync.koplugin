@@ -1,0 +1,371 @@
+local InfoMessage = require("ui/widget/infomessage")
+local InputDialog = require("ui/widget/inputdialog")
+local Menu = require("ui/widget/menu")
+local UIManager = require("ui/uimanager")
+local DataStorage = require("datastorage")
+local LuaSettings = require("luasettings")
+local lfs = require("libs/libkoreader-lfs")
+local _ = require("gettext")
+
+local Config = {}
+
+local CONFIG_FILE = DataStorage:getSettingsDir() .. "/webdavsync.lua"
+
+local DEFAULT_SETTINGS = {
+    server_index = nil,
+    local_path = nil
+}
+
+function Config.init(self)
+    self.settings = LuaSettings:open(CONFIG_FILE)
+end
+
+function Config.getSetting(self, name)
+    return self.settings:readSetting(name, DEFAULT_SETTINGS[name])
+end
+
+function Config.setSetting(self, name, value)
+    self.settings:saveSetting(name, value)
+    self.settings:flush()
+end
+
+-- Normalize a user-entered local destination.
+--
+-- Accepted examples:
+--
+--   Books
+--   /Books
+--   //Books
+--   Books/Synced
+--   /Books/Synced
+--   //Books//Synced
+--   /mnt/us/Books/Synced
+--   /mnt/us//Books//Synced
+--
+-- Everything is stored internally as:
+--
+--   /mnt/us/Books
+--   /mnt/us/Books/Synced
+--
+function Config.normalizeLocalPath(self, path)
+    if type(path) ~= "string" then
+        return nil
+    end
+
+    -- Remove leading/trailing whitespace.
+    path = path:match("^%s*(.-)%s*$")
+
+    if path == "" then
+        return nil
+    end
+
+    -- Reject null bytes.
+    if path:find("%z") then
+        return nil
+    end
+
+    -- Normalize every sequence of slashes to one slash.
+    path = path:gsub("/+", "/")
+
+    -- The user may enter the complete /mnt/us/... path.
+    if path == "/mnt/us" then
+        return nil
+    elseif path:sub(1, 8) == "/mnt/us/" then
+        path = path:sub(9)
+    elseif path:sub(1, 1) == "/" then
+        -- A leading slash is harmless: treat it as relative to /mnt/us.
+        path = path:gsub("^/+", "")
+    end
+
+    -- Remove any remaining leading slashes.
+    path = path:gsub("^/+", "")
+
+    -- Normalize again in case the prefix removal exposed repeated slashes.
+    path = path:gsub("/+", "/")
+
+    -- Reject path traversal.
+    if path:find("%.%.") then
+        return nil
+    end
+
+    -- Reject empty paths.
+    if path == "" then
+        return nil
+    end
+
+    return "/mnt/us/" .. path
+end
+
+-- Create a directory and all missing parent directories.
+function Config.ensureDirectory(self, path)
+    if type(path) ~= "string" or path == "" then
+        return false
+    end
+
+    if lfs.attributes(path, "mode") == "directory" then
+        return true
+    end
+
+    local parts = {}
+
+    for part in path:gmatch("[^/]+") do
+        table.insert(parts, part)
+    end
+
+    local current = ""
+
+    if path:sub(1, 1) == "/" then
+        current = "/"
+    end
+
+    for _, part in ipairs(parts) do
+        if current == "/" then
+            current = current .. part
+        elseif current == "" then
+            current = part
+        else
+            current = current .. "/" .. part
+        end
+
+        if lfs.attributes(current, "mode") ~= "directory" then
+            local ok = lfs.mkdir(current)
+
+            if not ok and lfs.attributes(current, "mode") ~= "directory" then
+                return false
+            end
+        end
+    end
+
+    return lfs.attributes(path, "mode") == "directory"
+end
+
+-- Read the WebDAV servers already configured in KOReader CloudStorage.
+function Config.getServers(self)
+    local settings_file = DataStorage:getSettingsDir() .. "/cloudstorage.lua"
+    local settings = LuaSettings:open(settings_file)
+
+    local configured = settings:readSetting("cs_servers", {})
+    local servers = {}
+
+    for index, server in ipairs(configured) do
+        if type(server) == "table" and server.type == "webdav" then
+            table.insert(servers, {
+                original_index = index,
+                server = server
+            })
+        end
+    end
+
+    return servers
+end
+
+function Config.getSelectedServer(self)
+    local selected_index = self:getSetting("server_index")
+
+    if type(selected_index) ~= "number" then
+        return nil
+    end
+
+    local servers = self:getServers()
+
+    for _, entry in ipairs(servers) do
+        if entry.original_index == selected_index then
+            return entry.server
+        end
+    end
+
+    return nil
+end
+
+function Config.getSelectedServerName(self)
+    local server = self:getSelectedServer()
+
+    if not server then
+        return _("Not selected")
+    end
+
+    return server.name or server.address or _("Unnamed WebDAV")
+end
+
+function Config.getLocalPath(self)
+    local path = self:getSetting("local_path")
+
+    if type(path) ~= "string" or path == "" then
+        return nil
+    end
+
+    return path
+end
+
+function Config.getLocalPathName(self)
+    return self:getLocalPath() or _("Not selected")
+end
+
+function Config.showInfo(self, text)
+    UIManager:show(InfoMessage:new{
+        text = text
+    })
+end
+
+function Config.chooseServer(self, touchmenu_instance)
+    local servers = self:getServers()
+
+    local menu
+    local items = {}
+
+    -- Clear server selection.
+    table.insert(items, {
+        text_func = function()
+            local selected_index = self:getSetting("server_index")
+
+            if selected_index == nil then
+                return "✓ " .. _("None")
+            end
+
+            return _("None")
+        end,
+
+        callback = function()
+            self:setSetting("server_index", nil)
+
+            if menu then
+                menu:updateItems()
+            end
+
+            if touchmenu_instance then
+                touchmenu_instance:updateItems()
+            end
+        end
+    })
+
+    -- Configured WebDAV servers.
+    for _, entry in ipairs(servers) do
+        local server = entry.server
+        local server_name = server.name or server.address or _("Unnamed WebDAV")
+
+        table.insert(items, {
+            text_func = function()
+                local selected_index = self:getSetting("server_index")
+
+                if selected_index == entry.original_index then
+                    return "✓ " .. server_name
+                end
+
+                return server_name
+            end,
+
+            callback = function()
+                self:setSetting("server_index", entry.original_index)
+
+                if menu then
+                    menu:updateItems()
+                end
+
+                if touchmenu_instance then
+                    touchmenu_instance:updateItems()
+                end
+            end
+        })
+    end
+
+    menu = Menu:new{
+        title = _("WebDAV server"),
+        item_table = items
+    }
+
+    UIManager:show(menu)
+end
+
+function Config.chooseLocalPath(self, touchmenu_instance)
+    local current = self:getLocalPath()
+
+    local input_value = ""
+
+    if current and current:sub(1, 8) == "/mnt/us/" then
+        input_value = current:sub(9)
+    elseif current then
+        input_value = current
+    end
+
+    local input_dialog
+
+    input_dialog = InputDialog:new{
+        title = _("Local destination"),
+
+        input = input_value,
+
+        description = _("Enter the folder relative to /mnt/us/.\n\n" .. "Example: Books/Synced\n\n" ..
+                            "The folder will be created automatically " .. "if it does not exist."),
+
+        buttons = {{{
+            text = _("Cancel"),
+            id = "close",
+
+            callback = function()
+                UIManager:close(input_dialog)
+            end
+        }, {
+            text = _("Clear"),
+
+            callback = function()
+                self:setSetting("local_path", nil)
+
+                if touchmenu_instance then
+                    touchmenu_instance:updateItems()
+                end
+
+                UIManager:close(input_dialog)
+            end
+        }, {
+            text = _("Save"),
+            is_enter_default = true,
+
+            callback = function()
+                local value = input_dialog:getInputText()
+
+                -- Empty input clears the destination.
+                if value == "" then
+                    self:setSetting("local_path", nil)
+
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+
+                    UIManager:close(input_dialog)
+                    return
+                end
+
+                local normalized = self:normalizeLocalPath(value)
+
+                if not normalized then
+                    self:showInfo(_("Invalid destination.") .. "\n\n" .. _("The destination must be inside /mnt/us."))
+                    return
+                end
+
+                -- Create the destination if necessary.
+                if lfs.attributes(normalized, "mode") ~= "directory" then
+                    local ok = self:ensureDirectory(normalized)
+
+                    if not ok then
+                        self:showInfo(_("Could not create the destination folder."))
+                        return
+                    end
+                end
+
+                -- Save the normalized absolute path.
+                self:setSetting("local_path", normalized)
+
+                if touchmenu_instance then
+                    touchmenu_instance:updateItems()
+                end
+
+                UIManager:close(input_dialog)
+            end
+        }}}
+    }
+
+    UIManager:show(input_dialog)
+    input_dialog:onShowKeyboard()
+end
+
+return Config
