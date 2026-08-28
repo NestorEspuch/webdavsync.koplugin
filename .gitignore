@@ -39,3 +39,11 @@ luac.out
 *.x86_64
 *.hex
 
+# Node.js (for local dev tools only)
+node_modules/
+
+# Agent / dev config (personal, not for public repo)
+AGENTS.md
+opencode.json
+docs/
+
