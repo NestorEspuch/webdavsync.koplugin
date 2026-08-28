@@ -16,38 +16,22 @@ local DEFAULT_SETTINGS = {
     local_path = nil
 }
 
-function Config.init(self)
-    self.settings = LuaSettings:open(CONFIG_FILE)
+local settings
+
+function Config.init()
+    settings = LuaSettings:open(CONFIG_FILE)
 end
 
-function Config.getSetting(self, name)
-    return self.settings:readSetting(name, DEFAULT_SETTINGS[name])
+function Config.getSetting(name)
+    return settings:readSetting(name, DEFAULT_SETTINGS[name])
 end
 
-function Config.setSetting(self, name, value)
-    self.settings:saveSetting(name, value)
-    self.settings:flush()
+function Config.setSetting(name, value)
+    settings:saveSetting(name, value)
+    settings:flush()
 end
 
--- Normalize a user-entered local destination.
---
--- Accepted examples:
---
---   Books
---   /Books
---   //Books
---   Books/Synced
---   /Books/Synced
---   //Books//Synced
---   /mnt/us/Books/Synced
---   /mnt/us//Books//Synced
---
--- Everything is stored internally as:
---
---   /mnt/us/Books
---   /mnt/us/Books/Synced
---
-function Config.normalizeLocalPath(self, path)
+function Config.normalizeLocalPath(path)
     if type(path) ~= "string" then
         return nil
     end
@@ -97,7 +81,7 @@ function Config.normalizeLocalPath(self, path)
 end
 
 -- Create a directory and all missing parent directories.
-function Config.ensureDirectory(self, path)
+function Config.ensureDirectory(path)
     if type(path) ~= "string" or path == "" then
         return false
     end
@@ -140,11 +124,11 @@ function Config.ensureDirectory(self, path)
 end
 
 -- Read the WebDAV servers already configured in KOReader CloudStorage.
-function Config.getServers(self)
+function Config.getServers()
     local settings_file = DataStorage:getSettingsDir() .. "/cloudstorage.lua"
-    local settings = LuaSettings:open(settings_file)
+    local cloudstorage_settings = LuaSettings:open(settings_file)
 
-    local configured = settings:readSetting("cs_servers", {})
+    local configured = cloudstorage_settings:readSetting("cs_servers", {})
     local servers = {}
 
     for index, server in ipairs(configured) do
@@ -159,14 +143,14 @@ function Config.getServers(self)
     return servers
 end
 
-function Config.getSelectedServer(self)
-    local selected_index = self:getSetting("server_index")
+function Config.getSelectedServer()
+    local selected_index = Config.getSetting("server_index")
 
     if type(selected_index) ~= "number" then
         return nil
     end
 
-    local servers = self:getServers()
+    local servers = Config.getServers()
 
     for _, entry in ipairs(servers) do
         if entry.original_index == selected_index then
@@ -177,8 +161,8 @@ function Config.getSelectedServer(self)
     return nil
 end
 
-function Config.getSelectedServerName(self)
-    local server = self:getSelectedServer()
+function Config.getSelectedServerName()
+    local server = Config.getSelectedServer()
 
     if not server then
         return _("Not selected")
@@ -187,8 +171,8 @@ function Config.getSelectedServerName(self)
     return server.name or server.address or _("Unnamed WebDAV")
 end
 
-function Config.getLocalPath(self)
-    local path = self:getSetting("local_path")
+function Config.getLocalPath()
+    local path = Config.getSetting("local_path")
 
     if type(path) ~= "string" or path == "" then
         return nil
@@ -197,18 +181,40 @@ function Config.getLocalPath(self)
     return path
 end
 
-function Config.getLocalPathName(self)
-    return self:getLocalPath() or _("Not selected")
+function Config.getLocalPathName()
+    return Config.getLocalPath() or _("Not selected")
 end
 
-function Config.showInfo(self, text)
+function Config.checkConfiguration()
+    local server = Config.getSelectedServer()
+    local local_path = Config.getLocalPath()
+
+    if not server and not local_path then
+        Config.showInfo(_("Please configure a WebDAV server and a local destination first."))
+        return nil, nil
+    end
+
+    if not server then
+        Config.showInfo(_("Please configure a WebDAV server first."))
+        return nil, nil
+    end
+
+    if not local_path then
+        Config.showInfo(_("Please configure a local destination first."))
+        return nil, nil
+    end
+
+    return server, local_path
+end
+
+function Config.showInfo(text)
     UIManager:show(InfoMessage:new{
         text = text
     })
 end
 
-function Config.chooseServer(self, touchmenu_instance)
-    local servers = self:getServers()
+function Config.chooseServer(touchmenu_instance)
+    local servers = Config.getServers()
 
     local menu
     local items = {}
@@ -216,7 +222,7 @@ function Config.chooseServer(self, touchmenu_instance)
     -- Clear server selection.
     table.insert(items, {
         text_func = function()
-            local selected_index = self:getSetting("server_index")
+            local selected_index = Config.getSetting("server_index")
 
             if selected_index == nil then
                 return "✓ " .. _("None")
@@ -226,7 +232,7 @@ function Config.chooseServer(self, touchmenu_instance)
         end,
 
         callback = function()
-            self:setSetting("server_index", nil)
+            Config.setSetting("server_index", nil)
 
             if menu then
                 menu:updateItems()
@@ -245,7 +251,7 @@ function Config.chooseServer(self, touchmenu_instance)
 
         table.insert(items, {
             text_func = function()
-                local selected_index = self:getSetting("server_index")
+                local selected_index = Config.getSetting("server_index")
 
                 if selected_index == entry.original_index then
                     return "✓ " .. server_name
@@ -255,7 +261,7 @@ function Config.chooseServer(self, touchmenu_instance)
             end,
 
             callback = function()
-                self:setSetting("server_index", entry.original_index)
+                Config.setSetting("server_index", entry.original_index)
 
                 if menu then
                     menu:updateItems()
@@ -276,8 +282,8 @@ function Config.chooseServer(self, touchmenu_instance)
     UIManager:show(menu)
 end
 
-function Config.chooseLocalPath(self, touchmenu_instance)
-    local current = self:getLocalPath()
+function Config.chooseLocalPath(touchmenu_instance)
+    local current = Config.getLocalPath()
 
     local input_value = ""
 
@@ -308,7 +314,7 @@ function Config.chooseLocalPath(self, touchmenu_instance)
             text = _("Clear"),
 
             callback = function()
-                self:setSetting("local_path", nil)
+                Config.setSetting("local_path", nil)
 
                 if touchmenu_instance then
                     touchmenu_instance:updateItems()
@@ -325,7 +331,7 @@ function Config.chooseLocalPath(self, touchmenu_instance)
 
                 -- Empty input clears the destination.
                 if value == "" then
-                    self:setSetting("local_path", nil)
+                    Config.setSetting("local_path", nil)
 
                     if touchmenu_instance then
                         touchmenu_instance:updateItems()
@@ -335,25 +341,25 @@ function Config.chooseLocalPath(self, touchmenu_instance)
                     return
                 end
 
-                local normalized = self:normalizeLocalPath(value)
+                local normalized = Config.normalizeLocalPath(value)
 
                 if not normalized then
-                    self:showInfo(_("Invalid destination.") .. "\n\n" .. _("The destination must be inside /mnt/us."))
+                    Config.showInfo(_("Invalid destination.") .. "\n\n" .. _("The destination must be inside /mnt/us."))
                     return
                 end
 
                 -- Create the destination if necessary.
                 if lfs.attributes(normalized, "mode") ~= "directory" then
-                    local ok = self:ensureDirectory(normalized)
+                    local ok = Config.ensureDirectory(normalized)
 
                     if not ok then
-                        self:showInfo(_("Could not create the destination folder."))
+                        Config.showInfo(_("Could not create the destination folder."))
                         return
                     end
                 end
 
                 -- Save the normalized absolute path.
-                self:setSetting("local_path", normalized)
+                Config.setSetting("local_path", normalized)
 
                 if touchmenu_instance then
                     touchmenu_instance:updateItems()

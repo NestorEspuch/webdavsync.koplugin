@@ -2,5 +2,5 @@ local _ = require("gettext")
 
 return {
     fullname = _("WebDAVSync"),
-    description = _([[Sincroniza libros desde un servidor WebDAV a una carpeta local.]])
+    description = _([[Synchronizes books from a WebDAV server to a local folder.]])
 }

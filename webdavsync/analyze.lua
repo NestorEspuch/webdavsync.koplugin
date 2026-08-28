@@ -1,6 +1,8 @@
 local _ = require("gettext")
 local lfs = require("libs/libkoreader-lfs")
 
+local Config = require("webdavsync/config")
+
 local Analyze = {}
 
 ----------------------------------------------------------------------
@@ -119,9 +121,9 @@ end
 -- WebDAV will be added after this has been verified.
 ----------------------------------------------------------------------
 
-function Analyze.run(self)
+function Analyze.run()
 
-    local server, local_path = self:checkConfiguration()
+    local server, local_path = Config.checkConfiguration()
 
     if not server or not local_path then
         return
@@ -133,7 +135,7 @@ function Analyze.run(self)
 
     if lfs.attributes(local_path, "mode") ~= "directory" then
 
-        self:showInfo(_("The local destination does not exist.") .. "\n\n" .. local_path)
+        Config.showInfo(_("The local destination does not exist.") .. "\n\n" .. local_path)
 
         return
     end
@@ -146,7 +148,7 @@ function Analyze.run(self)
 
     if not local_files then
 
-        self:showInfo(_("Could not read the local destination.") .. "\n\n" .. local_path)
+        Config.showInfo(_("Could not read the local destination.") .. "\n\n" .. local_path)
 
         return
     end
@@ -191,7 +193,7 @@ function Analyze.run(self)
         end
     end
 
-    self:showInfo(text)
+    Config.showInfo(text)
 end
 
 return Analyze
