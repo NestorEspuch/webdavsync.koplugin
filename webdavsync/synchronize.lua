@@ -10,7 +10,7 @@ local WebDavClient = require("webdavsync/webdav_client")
 
 local Synchronize = {}
 
-local function cleanupTempFiles(path)
+function Synchronize.cleanupTempFiles(path)
     local iterator, directory = lfs.dir(path)
     if not iterator or not directory then return end
 
@@ -19,7 +19,7 @@ local function cleanupTempFiles(path)
             local full_path = path .. "/" .. entry
             local attrs = lfs.attributes(full_path)
             if attrs and attrs.mode == "directory" then
-                cleanupTempFiles(full_path)
+                Synchronize.cleanupTempFiles(full_path)
             elseif attrs and attrs.mode == "file" and entry:match("%.tmp$") then
                 os.remove(full_path)
             end
@@ -27,7 +27,7 @@ local function cleanupTempFiles(path)
     end
 end
 
-local function deleteEmptyDirs(path)
+function Synchronize.deleteEmptyDirs(path)
     local iterator, directory = lfs.dir(path)
     if not iterator or not directory then return end
 
@@ -36,7 +36,7 @@ local function deleteEmptyDirs(path)
             local full_path = path .. "/" .. entry
             local attrs = lfs.attributes(full_path)
             if attrs and attrs.mode == "directory" then
-                deleteEmptyDirs(full_path)
+                Synchronize.deleteEmptyDirs(full_path)
                 lfs.rmdir(full_path)
             end
         end
@@ -53,7 +53,7 @@ function Synchronize.run()
         return
     end
 
-    cleanupTempFiles(local_path)
+    Synchronize.cleanupTempFiles(local_path)
 
     WebDavClient.run(server, function()
         Trapper:wrap(function()
@@ -83,6 +83,19 @@ function Synchronize.run()
             local to_download = result.remote_only
             local to_incomplete = result.incomplete
             local to_delete = result.local_only
+
+            local remote_count = Analyze.countFiles(remote_files)
+            local local_count = Analyze.countFiles(local_files)
+
+            if remote_count == 0 and local_count > 0 then
+                Trapper:clear()
+                UIManager:show(InfoMessage:new{
+                    text = _("Aborted: remote has 0 files but local has ")
+                        .. tostring(local_count) .. ".\n\n"
+                        .. _("Check server configuration."),
+                })
+                return
+            end
 
             local total_count = #to_download + #to_incomplete + #to_delete
             if total_count == 0 then
@@ -220,7 +233,7 @@ function Synchronize.run()
                 end
             end
 
-            deleteEmptyDirs(local_path)
+            Synchronize.deleteEmptyDirs(local_path)
 
             Trapper:clear()
 

@@ -13,7 +13,9 @@ local CONFIG_FILE = DataStorage:getSettingsDir() .. "/webdavsync.lua"
 
 local DEFAULT_SETTINGS = {
     server_index = nil,
-    local_path = nil
+    local_path = nil,
+    auto_analyze = false,
+    auto_sync = false,
 }
 
 local settings
@@ -197,13 +199,24 @@ function Config.checkConfiguration()
     return server, local_path
 end
 
+function Config.isConfigured()
+    return Config.getSelectedServer() ~= nil
+       and Config.getLocalPath() ~= nil
+end
+
+function Config.canAutoSync()
+    if not Config.isConfigured() then return false end
+    return Config.getSetting("auto_analyze")
+        or Config.getSetting("auto_sync")
+end
+
 function Config.showInfo(text)
     UIManager:show(InfoMessage:new{
         text = text
     })
 end
 
-function Config.chooseServer(touchmenu_instance)
+function Config.chooseServer(touchmenu_instance, plugin_instance)
     local servers = Config.getServers()
 
     local menu
@@ -222,6 +235,10 @@ function Config.chooseServer(touchmenu_instance)
 
         callback = function()
             Config.setSetting("server_index", nil)
+
+            if plugin_instance then
+                plugin_instance:registerEvents()
+            end
 
             if menu then
                 menu:updateItems()
@@ -251,6 +268,10 @@ function Config.chooseServer(touchmenu_instance)
             callback = function()
                 Config.setSetting("server_index", entry.original_index)
 
+                if plugin_instance then
+                    plugin_instance:registerEvents()
+                end
+
                 if menu then
                     menu:updateItems()
                 end
@@ -270,7 +291,7 @@ function Config.chooseServer(touchmenu_instance)
     UIManager:show(menu)
 end
 
-function Config.chooseLocalPath(touchmenu_instance)
+function Config.chooseLocalPath(touchmenu_instance, plugin_instance)
     local current = Config.getLocalPath()
 
     local input_value = ""
@@ -304,6 +325,10 @@ function Config.chooseLocalPath(touchmenu_instance)
             callback = function()
                 Config.setSetting("local_path", nil)
 
+                if plugin_instance then
+                    plugin_instance:registerEvents()
+                end
+
                 if touchmenu_instance then
                     touchmenu_instance:updateItems()
                 end
@@ -319,6 +344,10 @@ function Config.chooseLocalPath(touchmenu_instance)
 
                 if value == "" then
                     Config.setSetting("local_path", nil)
+
+                    if plugin_instance then
+                        plugin_instance:registerEvents()
+                    end
 
                     if touchmenu_instance then
                         touchmenu_instance:updateItems()
@@ -345,6 +374,10 @@ function Config.chooseLocalPath(touchmenu_instance)
                 end
 
                 Config.setSetting("local_path", normalized)
+
+                if plugin_instance then
+                    plugin_instance:registerEvents()
+                end
 
                 if touchmenu_instance then
                     touchmenu_instance:updateItems()

@@ -5,6 +5,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local LuaSettings = require("luasettings")
 local Menu = require("ui/widget/menu")
 local UIManager = require("ui/uimanager")
+local logger = require("logger")
 
 local Config = require("webdavsync/config")
 local WebDavClient = require("webdavsync/webdav_client")
@@ -105,69 +106,114 @@ end
 -- returned, not just formats KOReader can open.
 ----------------------------------------------------------------------
 
-function Analyze.scanRemoteDirectory(server)
+local function createScanState(server)
+    return {
+        server = server,
+        files = {},
+        url_prefix = (server.url or ""):match("^/*(.-)/*$") .. "/",
+        stack = {{url = server.url or "", level = 0}},
+    }
+end
 
-    local files = {}
-    local url_prefix = (server.url or ""):match("^/*(.-)/*$") .. "/"
-    local start_url = server.url or ""
+local function processFolder(state, current)
 
-    -- Temporarily enable show_unsupported to get all file types.
+    local items = WebDavClient.listFolder(state.server, current.url, true)
+
+    if not items then
+        return
+    end
+
+    for _, item in ipairs(items) do
+
+        if item.is_file then
+
+            local name = item.text
+
+            if not name:match("^%.") then
+                local relative = item.url:match("^" .. state.url_prefix:gsub("/", "%%/") .. "(.+)$")
+                if relative then
+                    state.files[relative] = {
+                        name = name,
+                        url = item.url,
+                        size = item.filesize,
+                    }
+                end
+            end
+
+        elseif item.is_folder then
+
+            local name = item.text:gsub("/$", "")
+
+            if not name:match("^%.") then
+                table.insert(state.stack, {
+                    url = item.url,
+                    level = current.level + 1,
+                })
+            end
+
+        end
+    end
+end
+
+local function openUnsupportedSettings()
     local settings_file = DataStorage:getSettingsDir() .. "/.settings/reader.lua"
     local reader_settings = LuaSettings:open(settings_file)
     local was_unsupported = reader_settings:isTrue("show_unsupported")
     reader_settings:saveSetting("show_unsupported", true)
     reader_settings:flush()
+    return reader_settings, was_unsupported
+end
 
-    local stack = {{url = start_url, level = 0}}
+local function closeUnsupportedSettings(reader_settings, was_unsupported)
+    reader_settings:saveSetting("show_unsupported", was_unsupported)
+    reader_settings:flush()
+end
 
-    while #stack > 0 do
+function Analyze.scanRemoteDirectory(server)
 
-        local current = table.remove(stack)
+    local state = createScanState(server)
+    logger.dbg("WebDAVSync: scanRemoteDirectory - start=" .. tostring(state.stack[1].url))
+
+    local reader_settings, was_unsupported = openUnsupportedSettings()
+
+    while #state.stack > 0 do
+
+        local current = table.remove(state.stack)
 
         if current.level < REMOTE_MAX_DEPTH then
-
-            local items = WebDavClient.listFolder(server, current.url, true)
-
-            if items then
-
-                for _, item in ipairs(items) do
-
-                    if item.is_file then
-
-                        local name = item.text
-
-                        if not name:match("^%.") then
-                            local relative = item.url:match("^" .. url_prefix:gsub("/", "%%/") .. "(.+)$")
-                            if relative then
-                                files[relative] = {
-                                    name = name,
-                                    url = item.url,
-                                    size = item.filesize,
-                                }
-                            end
-                        end
-
-                    elseif item.is_folder then
-
-                        local name = item.text:gsub("/$", "")
-
-                        if not name:match("^%.") then
-                            table.insert(stack, {
-                                url = item.url,
-                                level = current.level + 1,
-                            })
-                        end
-
-                    end
-                end
-            end
+            processFolder(state, current)
         end
     end
 
-    reader_settings:saveSetting("show_unsupported", was_unsupported)
-    reader_settings:flush()
+    closeUnsupportedSettings(reader_settings, was_unsupported)
 
-    return files
+    return state.files
+end
+
+function Analyze.scanRemoteDirectoryAsync(server, on_done)
+
+    local state = createScanState(server)
+    logger.dbg("WebDAVSync: scanRemoteDirectoryAsync - start=" .. tostring(state.stack[1].url))
+
+    local reader_settings, was_unsupported = openUnsupportedSettings()
+
+    local function step()
+        if #state.stack == 0 then
+            closeUnsupportedSettings(reader_settings, was_unsupported)
+            on_done(state.files)
+            return
+        end
+
+        local current = table.remove(state.stack)
+
+        if current.level < REMOTE_MAX_DEPTH then
+            processFolder(state, current)
+        end
+
+        UIManager:scheduleIn(0.05, step)
+    end
+
+    UIManager:scheduleIn(0.05, step)
 end
 
 ----------------------------------------------------------------------

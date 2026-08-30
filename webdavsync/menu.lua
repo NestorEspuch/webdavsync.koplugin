@@ -6,7 +6,7 @@ local Synchronize = require("webdavsync/synchronize")
 
 local Menu = {}
 
-function Menu.addToMainMenu(menu_items)
+function Menu.addToMainMenu(menu_items, plugin_instance)
     menu_items.webdavsync = {
 
         text = _("WebDAVSync"),
@@ -22,7 +22,7 @@ function Menu.addToMainMenu(menu_items)
                 end,
 
                 callback = function(touchmenu_instance)
-                    Config.chooseServer(touchmenu_instance)
+                    Config.chooseServer(touchmenu_instance, plugin_instance)
                 end,
 
                 keep_menu_open = true
@@ -34,7 +34,50 @@ function Menu.addToMainMenu(menu_items)
                 end,
 
                 callback = function(touchmenu_instance)
-                    Config.chooseLocalPath(touchmenu_instance)
+                    Config.chooseLocalPath(touchmenu_instance, plugin_instance)
+                end,
+
+                keep_menu_open = true,
+                separator = true,
+
+            }, {
+
+                text = _("Auto-analyze on resume"),
+
+                checked_func = function()
+                    return Config.getSetting("auto_analyze")
+                end,
+
+                callback = function()
+                    Config.setSetting("auto_analyze", not Config.getSetting("auto_analyze"))
+                    if plugin_instance then
+                        plugin_instance:registerEvents()
+                    end
+                end,
+
+                enabled_func = function()
+                    return Config.isConfigured() and not Config.getSetting("auto_sync")
+                end,
+
+                keep_menu_open = true
+
+            }, {
+
+                text = _("Auto-sync on resume"),
+
+                checked_func = function()
+                    return Config.getSetting("auto_sync")
+                end,
+
+                callback = function()
+                    Config.setSetting("auto_sync", not Config.getSetting("auto_sync"))
+                    if plugin_instance then
+                        plugin_instance:registerEvents()
+                    end
+                end,
+
+                enabled_func = function()
+                    return Config.isConfigured()
                 end,
 
                 keep_menu_open = true
@@ -48,6 +91,10 @@ function Menu.addToMainMenu(menu_items)
                 Analyze.run()
             end,
 
+            enabled_func = function()
+                return Config.isConfigured()
+            end,
+
             keep_menu_open = true
 
         }, {
@@ -56,6 +103,10 @@ function Menu.addToMainMenu(menu_items)
 
             callback = function()
                 Synchronize.run()
+            end,
+
+            enabled_func = function()
+                return Config.isConfigured()
             end,
 
             keep_menu_open = true
