@@ -65,7 +65,6 @@ webdavsync.koplugin/
 │   ├── menu.lua            Menu construction
 │   ├── analyze.lua         Local scan + comparison
 │   └── synchronize.lua     Sync stub (not implemented)
-├── AGENTS.md               Agent rules for development
 └── README.md
 ```
 
@@ -80,8 +79,6 @@ This plugin is designed with Kindle safety as the top priority:
 
 ## Development
 
-See [AGENTS.md](AGENTS.md) for development rules and conventions.
-
 ### Debugging
 
 ```sh
@@ -95,4 +92,6 @@ cd /mnt/us/koreader
 
 ## License
 
-This project is provided as-is for the KOReader community.
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+You can use, modify, and distribute this software for noncommercial purposes.
+See the [LICENSE](LICENSE) file for full details.
